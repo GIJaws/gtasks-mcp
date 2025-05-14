@@ -565,4 +565,453 @@ export class TaskActions {
       };
     }
   }
+
+  // Batch operations
+  static async batchCreateTasks(request: CallToolRequest, tasks: tasks_v1.Tasks) {
+    const taskBatch = request.params.arguments?.tasks as Array<{
+      taskListId?: string,
+      title: string,
+      notes?: string,
+      due?: string,
+      status?: string
+    }>;
+    
+    if (!taskBatch || !Array.isArray(taskBatch) || taskBatch.length === 0) {
+      throw new Error("tasks array is required and must not be empty");
+    }
+    
+    const results = [];
+    const errors = [];
+    
+    for (const taskData of taskBatch) {
+      const taskListId = taskData.taskListId || "@default";
+      
+      if (!taskData.title) {
+        errors.push({ error: "Task title is required", taskData });
+        continue;
+      }
+      
+      try {
+        const task = {
+          title: taskData.title,
+          notes: taskData.notes || "",
+          due: taskData.due,
+          status: taskData.status || "needsAction",
+        };
+        
+        const taskResponse = await tasks.tasks.insert({
+          tasklist: taskListId,
+          requestBody: task,
+        });
+        
+        results.push({
+          success: true,
+          taskId: taskResponse.data.id,
+          title: taskResponse.data.title,
+          taskListId: taskListId
+        });
+      } catch (error) {
+        errors.push({
+          error: error instanceof Error ? error.message : String(error),
+          taskData
+        });
+      }
+    }
+    
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Batch task creation: ${results.length} succeeded, ${errors.length} failed\n\nSuccesses:\n${results.map(r => `- Task "${r.title}" created in list "${r.taskListId}" with ID: ${r.taskId}`).join('\n')}${errors.length > 0 ? `\n\nErrors:\n${errors.map(e => `- Failed to create task: ${e.error}`).join('\n')}` : ''}`,
+        },
+      ],
+      isError: false,
+    };
+  }
+  
+  static async batchUpdateTasks(request: CallToolRequest, tasks: tasks_v1.Tasks) {
+    const taskBatch = request.params.arguments?.tasks as Array<{
+      taskListId: string,
+      taskId: string,
+      title?: string,
+      notes?: string,
+      due?: string,
+      status?: string
+    }>;
+    
+    if (!taskBatch || !Array.isArray(taskBatch) || taskBatch.length === 0) {
+      throw new Error("tasks array is required and must not be empty");
+    }
+    
+    const results = [];
+    const errors = [];
+    
+    for (const taskData of taskBatch) {
+      if (!taskData.taskListId || !taskData.taskId) {
+        errors.push({ error: "Task list ID and task ID are required", taskData });
+        continue;
+      }
+      
+      try {
+        // Create a task object with only the fields to update
+        const task: any = {
+          id: taskData.taskId
+        };
+        
+        if (taskData.title !== undefined) task.title = taskData.title;
+        if (taskData.notes !== undefined) task.notes = taskData.notes;
+        if (taskData.due !== undefined) task.due = taskData.due;
+        if (taskData.status !== undefined) task.status = taskData.status;
+        
+        const taskResponse = await tasks.tasks.patch({
+          tasklist: taskData.taskListId,
+          task: taskData.taskId,
+          requestBody: task,
+        });
+        
+        results.push({
+          success: true,
+          taskId: taskResponse.data.id,
+          title: taskResponse.data.title,
+          taskListId: taskData.taskListId
+        });
+      } catch (error) {
+        errors.push({
+          error: error instanceof Error ? error.message : String(error),
+          taskData
+        });
+      }
+    }
+    
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Batch task update: ${results.length} succeeded, ${errors.length} failed\n\nSuccesses:\n${results.map(r => `- Task "${r.title}" updated in list "${r.taskListId}"`).join('\n')}${errors.length > 0 ? `\n\nErrors:\n${errors.map(e => `- Failed to update task: ${e.error}`).join('\n')}` : ''}`,
+        },
+      ],
+      isError: false,
+    };
+  }
+  
+  static async batchDeleteTasks(request: CallToolRequest, tasks: tasks_v1.Tasks) {
+    const taskBatch = request.params.arguments?.tasks as Array<{
+      taskListId: string,
+      taskId: string
+    }>;
+    
+    if (!taskBatch || !Array.isArray(taskBatch) || taskBatch.length === 0) {
+      throw new Error("tasks array is required and must not be empty");
+    }
+    
+    const results = [];
+    const errors = [];
+    
+    for (const taskData of taskBatch) {
+      if (!taskData.taskListId || !taskData.taskId) {
+        errors.push({ error: "Task list ID and task ID are required", taskData });
+        continue;
+      }
+      
+      try {
+        await tasks.tasks.delete({
+          tasklist: taskData.taskListId,
+          task: taskData.taskId,
+        });
+        
+        results.push({
+          success: true,
+          taskId: taskData.taskId,
+          taskListId: taskData.taskListId
+        });
+      } catch (error) {
+        errors.push({
+          error: error instanceof Error ? error.message : String(error),
+          taskData
+        });
+      }
+    }
+    
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Batch task deletion: ${results.length} succeeded, ${errors.length} failed\n\nSuccesses:\n${results.map(r => `- Task ${r.taskId} deleted from list "${r.taskListId}"`).join('\n')}${errors.length > 0 ? `\n\nErrors:\n${errors.map(e => `- Failed to delete task: ${e.error}`).join('\n')}` : ''}`,
+        },
+      ],
+      isError: false,
+    };
+  }
+  
+  static async batchMoveTasks(request: CallToolRequest, tasks: tasks_v1.Tasks) {
+    const taskBatch = request.params.arguments?.tasks as Array<{
+      sourceTaskListId: string,
+      targetTaskListId: string,
+      taskId: string
+    }>;
+    
+    if (!taskBatch || !Array.isArray(taskBatch) || taskBatch.length === 0) {
+      throw new Error("tasks array is required and must not be empty");
+    }
+    
+    const results = [];
+    const errors = [];
+    const warnings = [];
+    
+    for (const moveData of taskBatch) {
+      if (!moveData.sourceTaskListId || !moveData.targetTaskListId || !moveData.taskId) {
+        errors.push({ error: "Source task list ID, target task list ID, and task ID are required", moveData });
+        continue;
+      }
+      
+      try {
+        // 1. Get the task from source list
+        let originalTask;
+        try {
+          const taskResponse = await tasks.tasks.get({
+            tasklist: moveData.sourceTaskListId,
+            task: moveData.taskId,
+          });
+          
+          originalTask = taskResponse?.data;
+          
+          if (!originalTask || !originalTask.title) {
+            throw new Error(`Task not found or has invalid format`);
+          }
+        } catch (error) {
+          throw new Error(`Could not get source task: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        
+        // 2. Create the task in the target list
+        let newTaskId;
+        try {
+          const newTask = {
+            title: originalTask.title || "Untitled Task",
+            notes: originalTask.notes || "",
+            due: originalTask.due || undefined,
+            status: originalTask.status || "needsAction",
+          };
+          
+          const newTaskResponse = await tasks.tasks.insert({
+            tasklist: moveData.targetTaskListId,
+            requestBody: newTask,
+          });
+          
+          newTaskId = newTaskResponse?.data?.id;
+          
+          if (!newTaskId) {
+            throw new Error("Failed to create new task - no ID returned");
+          }
+        } catch (error) {
+          throw new Error(`Could not create task in target list: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        
+        // 3. Delete the task from the source list
+        try {
+          await tasks.tasks.delete({
+            tasklist: moveData.sourceTaskListId,
+            task: moveData.taskId,
+          });
+        } catch (error) {
+          const warning = `Created task ${newTaskId} in ${moveData.targetTaskListId} but failed to delete original: ${error instanceof Error ? error.message : String(error)}`;
+          console.error(warning);
+          warnings.push({
+            warning,
+            moveData,
+            partialSuccess: true,
+            originalTaskId: moveData.taskId,
+            newTaskId: newTaskId,
+            title: originalTask.title
+          });
+          continue;
+        }
+        
+        results.push({
+          success: true,
+          originalTaskId: moveData.taskId,
+          newTaskId: newTaskId,
+          title: originalTask.title,
+          sourceTaskListId: moveData.sourceTaskListId,
+          targetTaskListId: moveData.targetTaskListId
+        });
+      } catch (error) {
+        errors.push({
+          error: error instanceof Error ? error.message : String(error),
+          moveData
+        });
+      }
+    }
+    
+    let summaryText = `Batch task move: ${results.length} succeeded, ${errors.length} failed`;
+    if (warnings.length > 0) {
+      summaryText += `, ${warnings.length} partial (created but not deleted)`;
+    }
+    
+    let resultText = `\n\nSuccesses:\n${results.map(r => `- Task "${r.title}" moved from list "${r.sourceTaskListId}" to list "${r.targetTaskListId}"`).join('\n')}`;
+    
+    if (warnings.length > 0) {
+      resultText += `\n\nPartial Successes (created but not deleted from source):\n${warnings.map(w => `- Task "${w.title}" copied to list "${w.moveData.targetTaskListId}" but not removed from "${w.moveData.sourceTaskListId}"`).join('\n')}`;
+    }
+    
+    if (errors.length > 0) {
+      resultText += `\n\nErrors:\n${errors.map(e => `- Failed to move task: ${e.error}`).join('\n')}`;
+    }
+    
+    return {
+      content: [
+        {
+          type: "text",
+          text: summaryText + resultText,
+        },
+      ],
+      isError: false,
+    };
+  }
+  
+  static async batchCreateTaskLists(request: CallToolRequest, tasks: tasks_v1.Tasks) {
+    const listBatch = request.params.arguments?.lists as Array<{
+      title: string
+    }>;
+    
+    if (!listBatch || !Array.isArray(listBatch) || listBatch.length === 0) {
+      throw new Error("lists array is required and must not be empty");
+    }
+    
+    const results = [];
+    const errors = [];
+    
+    for (const listData of listBatch) {
+      if (!listData.title) {
+        errors.push({ error: "Task list title is required", listData });
+        continue;
+      }
+      
+      try {
+        const taskListResponse = await tasks.tasklists.insert({
+          requestBody: {
+            title: listData.title
+          }
+        });
+        
+        results.push({
+          success: true,
+          listId: taskListResponse.data.id,
+          title: taskListResponse.data.title
+        });
+      } catch (error) {
+        errors.push({
+          error: error instanceof Error ? error.message : String(error),
+          listData
+        });
+      }
+    }
+    
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Batch task list creation: ${results.length} succeeded, ${errors.length} failed\n\nSuccesses:\n${results.map(r => `- List "${r.title}" created with ID: ${r.listId}`).join('\n')}${errors.length > 0 ? `\n\nErrors:\n${errors.map(e => `- Failed to create list: ${e.error}`).join('\n')}` : ''}`,
+        },
+      ],
+      isError: false,
+    };
+  }
+  
+  static async batchUpdateTaskLists(request: CallToolRequest, tasks: tasks_v1.Tasks) {
+    const listBatch = request.params.arguments?.lists as Array<{
+      listId: string,
+      title: string
+    }>;
+    
+    if (!listBatch || !Array.isArray(listBatch) || listBatch.length === 0) {
+      throw new Error("lists array is required and must not be empty");
+    }
+    
+    const results = [];
+    const errors = [];
+    
+    for (const listData of listBatch) {
+      if (!listData.listId || !listData.title) {
+        errors.push({ error: "Task list ID and title are required", listData });
+        continue;
+      }
+      
+      try {
+        const taskListResponse = await tasks.tasklists.update({
+          tasklist: listData.listId,
+          requestBody: {
+            id: listData.listId,
+            title: listData.title
+          }
+        });
+        
+        results.push({
+          success: true,
+          listId: taskListResponse.data.id,
+          title: taskListResponse.data.title
+        });
+      } catch (error) {
+        errors.push({
+          error: error instanceof Error ? error.message : String(error),
+          listData
+        });
+      }
+    }
+    
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Batch task list update: ${results.length} succeeded, ${errors.length} failed\n\nSuccesses:\n${results.map(r => `- List "${r.title}" updated with ID: ${r.listId}`).join('\n')}${errors.length > 0 ? `\n\nErrors:\n${errors.map(e => `- Failed to update list: ${e.error}`).join('\n')}` : ''}`,
+        },
+      ],
+      isError: false,
+    };
+  }
+  
+  static async batchDeleteTaskLists(request: CallToolRequest, tasks: tasks_v1.Tasks) {
+    const listBatch = request.params.arguments?.lists as Array<{
+      listId: string
+    }>;
+    
+    if (!listBatch || !Array.isArray(listBatch) || listBatch.length === 0) {
+      throw new Error("lists array is required and must not be empty");
+    }
+    
+    const results = [];
+    const errors = [];
+    
+    for (const listData of listBatch) {
+      if (!listData.listId) {
+        errors.push({ error: "Task list ID is required", listData });
+        continue;
+      }
+      
+      try {
+        await tasks.tasklists.delete({
+          tasklist: listData.listId
+        });
+        
+        results.push({
+          success: true,
+          listId: listData.listId
+        });
+      } catch (error) {
+        errors.push({
+          error: error instanceof Error ? error.message : String(error),
+          listData
+        });
+      }
+    }
+    
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Batch task list deletion: ${results.length} succeeded, ${errors.length} failed\n\nSuccesses:\n${results.map(r => `- List ${r.listId} deleted`).join('\n')}${errors.length > 0 ? `\n\nErrors:\n${errors.map(e => `- Failed to delete list: ${e.error}`).join('\n')}` : ''}`,
+        },
+      ],
+      isError: false,
+    };
+  }
 }

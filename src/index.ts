@@ -249,6 +249,228 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["prefixMappings"]
         }
       },
+      {
+        name: "batchCreateTasks",
+        description: "Create multiple tasks at once, optionally in different lists",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tasks: {
+              type: "array",
+              description: "Array of tasks to create",
+              items: {
+                type: "object",
+                properties: {
+                  taskListId: {
+                    type: "string",
+                    description: "Task list ID"
+                  },
+                  title: {
+                    type: "string",
+                    description: "Task title"
+                  },
+                  notes: {
+                    type: "string",
+                    description: "Task notes"
+                  },
+                  due: {
+                    type: "string",
+                    description: "Due date"
+                  },
+                  status: {
+                    type: "string",
+                    enum: ["needsAction", "completed"],
+                    description: "Task status"
+                  }
+                },
+                required: ["title"]
+              }
+            }
+          },
+          required: ["tasks"]
+        }
+      },
+      {
+        name: "batchUpdateTasks",
+        description: "Update multiple tasks at once",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tasks: {
+              type: "array",
+              description: "Array of tasks to update",
+              items: {
+                type: "object",
+                properties: {
+                  taskListId: {
+                    type: "string",
+                    description: "Task list ID"
+                  },
+                  taskId: {
+                    type: "string",
+                    description: "Task ID"
+                  },
+                  title: {
+                    type: "string",
+                    description: "Task title"
+                  },
+                  notes: {
+                    type: "string",
+                    description: "Task notes"
+                  },
+                  due: {
+                    type: "string",
+                    description: "Due date"
+                  },
+                  status: {
+                    type: "string",
+                    enum: ["needsAction", "completed"],
+                    description: "Task status"
+                  }
+                },
+                required: ["taskListId", "taskId"]
+              }
+            }
+          },
+          required: ["tasks"]
+        }
+      },
+      {
+        name: "batchDeleteTasks",
+        description: "Delete multiple tasks at once",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tasks: {
+              type: "array",
+              description: "Array of tasks to delete",
+              items: {
+                type: "object",
+                properties: {
+                  taskListId: {
+                    type: "string",
+                    description: "Task list ID"
+                  },
+                  taskId: {
+                    type: "string",
+                    description: "Task ID"
+                  }
+                },
+                required: ["taskListId", "taskId"]
+              }
+            }
+          },
+          required: ["tasks"]
+        }
+      },
+      {
+        name: "batchMoveTasks",
+        description: "Move multiple tasks between lists at once",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tasks: {
+              type: "array",
+              description: "Array of tasks to move",
+              items: {
+                type: "object",
+                properties: {
+                  sourceTaskListId: {
+                    type: "string",
+                    description: "Source task list ID"
+                  },
+                  targetTaskListId: {
+                    type: "string",
+                    description: "Target task list ID"
+                  },
+                  taskId: {
+                    type: "string",
+                    description: "Task ID"
+                  }
+                },
+                required: ["sourceTaskListId", "targetTaskListId", "taskId"]
+              }
+            }
+          },
+          required: ["tasks"]
+        }
+      },
+      {
+        name: "batchCreateTaskLists",
+        description: "Create multiple task lists at once",
+        inputSchema: {
+          type: "object",
+          properties: {
+            lists: {
+              type: "array",
+              description: "Array of lists to create",
+              items: {
+                type: "object",
+                properties: {
+                  title: {
+                    type: "string",
+                    description: "List title"
+                  }
+                },
+                required: ["title"]
+              }
+            }
+          },
+          required: ["lists"]
+        }
+      },
+      {
+        name: "batchUpdateTaskLists",
+        description: "Update multiple task lists at once",
+        inputSchema: {
+          type: "object",
+          properties: {
+            lists: {
+              type: "array",
+              description: "Array of lists to update",
+              items: {
+                type: "object",
+                properties: {
+                  listId: {
+                    type: "string",
+                    description: "List ID"
+                  },
+                  title: {
+                    type: "string",
+                    description: "List title"
+                  }
+                },
+                required: ["listId", "title"]
+              }
+            }
+          },
+          required: ["lists"]
+        }
+      },
+      {
+        name: "batchDeleteTaskLists",
+        description: "Delete multiple task lists at once",
+        inputSchema: {
+          type: "object",
+          properties: {
+            lists: {
+              type: "array",
+              description: "Array of lists to delete",
+              items: {
+                type: "object",
+                properties: {
+                  listId: {
+                    type: "string",
+                    description: "List ID"
+                  }
+                },
+                required: ["listId"]
+              }
+            }
+          },
+          required: ["lists"]
+        }
+      },
     ],
   };
 });
@@ -288,6 +510,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
   if (request.params.name === "reorganizeTasks") {
     const taskResult = await TaskActions.reorganizeTasks(request, tasks);
+    return taskResult;
+  }
+  if (request.params.name === "batchCreateTasks") {
+    const taskResult = await TaskActions.batchCreateTasks(request, tasks);
+    return taskResult;
+  }
+  if (request.params.name === "batchUpdateTasks") {
+    const taskResult = await TaskActions.batchUpdateTasks(request, tasks);
+    return taskResult;
+  }
+  if (request.params.name === "batchDeleteTasks") {
+    const taskResult = await TaskActions.batchDeleteTasks(request, tasks);
+    return taskResult;
+  }
+  if (request.params.name === "batchMoveTasks") {
+    const taskResult = await TaskActions.batchMoveTasks(request, tasks);
+    return taskResult;
+  }
+  if (request.params.name === "batchCreateTaskLists") {
+    const taskResult = await TaskActions.batchCreateTaskLists(request, tasks);
+    return taskResult;
+  }
+  if (request.params.name === "batchUpdateTaskLists") {
+    const taskResult = await TaskActions.batchUpdateTaskLists(request, tasks);
+    return taskResult;
+  }
+  if (request.params.name === "batchDeleteTaskLists") {
+    const taskResult = await TaskActions.batchDeleteTaskLists(request, tasks);
     return taskResult;
   }
   throw new Error("Tool not found");
