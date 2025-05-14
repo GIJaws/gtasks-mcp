@@ -201,6 +201,54 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["id", "uri"],
         },
       },
+      {
+        name: "listTaskLists",
+        description: "List all task lists in Google Tasks",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "moveTask",
+        description: "Move a task from one task list to another",
+        inputSchema: {
+          type: "object",
+          properties: {
+            sourceTaskListId: {
+              type: "string", 
+              description: "Source task list ID"
+            },
+            targetTaskListId: {
+              type: "string",
+              description: "Target task list ID"
+            },
+            taskId: {
+              type: "string",
+              description: "Task ID to move"
+            }
+          },
+          required: ["sourceTaskListId", "targetTaskListId", "taskId"]
+        }
+      },
+      {
+        name: "reorganizeTasks",
+        description: "Reorganize tasks to appropriate lists based on prefixes",
+        inputSchema: {
+          type: "object",
+          properties: {
+            prefixMappings: {
+              type: "object",
+              description: "Mapping of prefixes to task list titles, e.g. {\"ADMIN\": \"Admin Tasks\"}"
+            },
+            dryRun: {
+              type: "boolean",
+              description: "If true, only show what would be moved without making changes"
+            }
+          },
+          required: ["prefixMappings"]
+        }
+      },
     ],
   };
 });
@@ -228,6 +276,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
   if (request.params.name === "clear") {
     const taskResult = await TaskActions.clear(request, tasks);
+    return taskResult;
+  }
+  if (request.params.name === "listTaskLists") {
+    const taskResult = await TaskActions.listTaskLists(request, tasks);
+    return taskResult;
+  }
+  if (request.params.name === "moveTask") {
+    const taskResult = await TaskActions.moveTask(request, tasks);
+    return taskResult;
+  }
+  if (request.params.name === "reorganizeTasks") {
+    const taskResult = await TaskActions.reorganizeTasks(request, tasks);
     return taskResult;
   }
   throw new Error("Tool not found");
