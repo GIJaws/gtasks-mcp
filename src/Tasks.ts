@@ -1014,4 +1014,267 @@ export class TaskActions {
       isError: false,
     };
   }
+
+  // Subtask operations
+  static async makeSubtask(request: CallToolRequest, tasks: tasks_v1.Tasks) {
+    const taskListId = request.params.arguments?.taskListId as string;
+    const taskId = request.params.arguments?.taskId as string;
+    const parentTaskId = request.params.arguments?.parentTaskId as string;
+    
+    if (!taskListId || !taskId || !parentTaskId) {
+      throw new Error("Task list ID, task ID, and parent task ID are required");
+    }
+    
+    try {
+      // Verify both tasks exist in the specified list
+      try {
+        await tasks.tasks.get({
+          tasklist: taskListId,
+          task: taskId,
+        });
+        
+        await tasks.tasks.get({
+          tasklist: taskListId,
+          task: parentTaskId,
+        });
+      } catch (error) {
+        throw new Error(`Could not verify tasks: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      
+      // Use the move method with parent parameter to make a task a subtask
+      try {
+        const taskResponse = await tasks.tasks.move({
+          tasklist: taskListId,
+          task: taskId,
+          parent: parentTaskId
+        });
+        
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Task "${taskResponse.data.title}" is now a subtask of task with ID ${parentTaskId}`,
+            },
+          ],
+          isError: false,
+        };
+      } catch (error) {
+        throw new Error(`Could not make subtask: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } catch (error) {
+      console.error("Error making subtask:", error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error making subtask: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+  
+  static async createSubtask(request: CallToolRequest, tasks: tasks_v1.Tasks) {
+    const taskListId = request.params.arguments?.taskListId as string || "@default";
+    const parentTaskId = request.params.arguments?.parentTaskId as string;
+    const taskTitle = request.params.arguments?.title as string;
+    const taskNotes = request.params.arguments?.notes as string;
+    const taskStatus = request.params.arguments?.status as string;
+    const taskDue = request.params.arguments?.due as string;
+    
+    if (!parentTaskId || !taskTitle) {
+      throw new Error("Parent task ID and task title are required");
+    }
+    
+    try {
+      // Verify parent task exists
+      try {
+        await tasks.tasks.get({
+          tasklist: taskListId,
+          task: parentTaskId,
+        });
+      } catch (error) {
+        throw new Error(`Could not verify parent task: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      
+      // Create the subtask
+      try {
+        const task = {
+          title: taskTitle,
+          notes: taskNotes || "",
+          due: taskDue,
+          status: taskStatus || "needsAction"
+          // parent should not be included in the requestBody
+        };
+        
+        const taskResponse = await tasks.tasks.insert({
+          tasklist: taskListId,
+          requestBody: task,
+          parent: parentTaskId // Pass parent as a parameter to the method
+        });
+        
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Subtask "${taskResponse.data.title}" created under parent task with ID ${parentTaskId}`,
+            },
+          ],
+          isError: false,
+        };
+      } catch (error) {
+        throw new Error(`Could not create subtask: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } catch (error) {
+      console.error("Error creating subtask:", error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error creating subtask: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+  
+  static async listSubtasks(request: CallToolRequest, tasks: tasks_v1.Tasks) {
+    const taskListId = request.params.arguments?.taskListId as string || "@default";
+    const parentTaskId = request.params.arguments?.parentTaskId as string;
+    
+    if (!taskListId || !parentTaskId) {
+      throw new Error("Task list ID and parent task ID are required");
+    }
+    
+    try {
+      const tasksResponse = await tasks.tasks.list({
+        tasklist: taskListId,
+        maxResults: MAX_TASK_RESULTS,
+      });
+      
+      const items = tasksResponse.data.items || [];
+      
+      // Get the parent task for reference
+      let parentTask;
+      try {
+        const parentResponse = await tasks.tasks.get({
+          tasklist: taskListId,
+          task: parentTaskId,
+        });
+        parentTask = parentResponse.data;
+      } catch (error) {
+        throw new Error(`Could not get parent task: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      
+      // Filter for subtasks of the specified parent
+      const subtasks = items.filter(task => task.parent === parentTaskId)
+        .map(task => ({
+          ...task,
+          taskListId: taskListId,
+          taskListTitle: "", // We don't have this info readily available
+        }));
+      
+      const formattedTasks = this.formatTaskList(subtasks);
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Found ${subtasks.length} subtasks for "${parentTask.title || 'Unknown task'}":\n${formattedTasks}`,
+          },
+        ],
+        isError: false,
+      };
+    } catch (error) {
+      console.error("Error listing subtasks:", error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error listing subtasks: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+  
+  static async batchCreateSubtasks(request: CallToolRequest, tasks: tasks_v1.Tasks) {
+    const subtaskBatch = request.params.arguments?.subtasks as Array<{
+      taskListId?: string,
+      parentTaskId: string,
+      title: string,
+      notes?: string,
+      due?: string,
+      status?: string
+    }>;
+    
+    if (!subtaskBatch || !Array.isArray(subtaskBatch) || subtaskBatch.length === 0) {
+      throw new Error("subtasks array is required and must not be empty");
+    }
+    
+    const results = [];
+    const errors = [];
+    
+    for (const subtaskData of subtaskBatch) {
+      const taskListId = subtaskData.taskListId || "@default";
+      
+      if (!subtaskData.parentTaskId || !subtaskData.title) {
+        errors.push({ error: "Parent task ID and title are required", subtaskData });
+        continue;
+      }
+      
+      try {
+        // Verify parent task exists
+        try {
+          await tasks.tasks.get({
+            tasklist: taskListId,
+            task: subtaskData.parentTaskId,
+          });
+        } catch (error) {
+          throw new Error(`Could not verify parent task: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        
+        // Create the subtask
+        const task = {
+          title: subtaskData.title,
+          notes: subtaskData.notes || "",
+          due: subtaskData.due,
+          status: subtaskData.status || "needsAction"
+          // parent should not be included in the requestBody
+        };
+        
+        const taskResponse = await tasks.tasks.insert({
+          tasklist: taskListId,
+          requestBody: task,
+          parent: subtaskData.parentTaskId // Pass parent as a parameter to the method
+        });
+        
+        results.push({
+          success: true,
+          taskId: taskResponse.data.id,
+          title: taskResponse.data.title,
+          parentTaskId: subtaskData.parentTaskId,
+          taskListId: taskListId
+        });
+      } catch (error) {
+        errors.push({
+          error: error instanceof Error ? error.message : String(error),
+          subtaskData
+        });
+      }
+    }
+    
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Batch subtask creation: ${results.length} succeeded, ${errors.length} failed\n\nSuccesses:\n${results.map(r => `- Subtask "${r.title}" created under parent task ${r.parentTaskId} with ID: ${r.taskId}`).join('\n')}${errors.length > 0 ? `\n\nErrors:\n${errors.map(e => `- Failed to create subtask: ${e.error}`).join('\n')}` : ''}`,
+        },
+      ],
+      isError: false,
+    };
+  }
 }

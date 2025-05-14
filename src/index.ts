@@ -471,6 +471,126 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["lists"]
         }
       },
+      {
+        name: "makeSubtask",
+        description: "Make an existing task a subtask of another task",
+        inputSchema: {
+          type: "object",
+          properties: {
+            taskListId: {
+              type: "string",
+              description: "Task list ID containing both tasks"
+            },
+            taskId: {
+              type: "string",
+              description: "Task ID to make a subtask"
+            },
+            parentTaskId: {
+              type: "string",
+              description: "Parent task ID"
+            }
+          },
+          required: ["taskListId", "taskId", "parentTaskId"]
+        }
+      },
+      {
+        name: "createSubtask",
+        description: "Create a new task as a subtask of an existing task",
+        inputSchema: {
+          type: "object",
+          properties: {
+            taskListId: {
+              type: "string",
+              description: "Task list ID"
+            },
+            parentTaskId: {
+              type: "string",
+              description: "Parent task ID"
+            },
+            title: {
+              type: "string",
+              description: "Task title"
+            },
+            notes: {
+              type: "string",
+              description: "Task notes"
+            },
+            due: {
+              type: "string",
+              description: "Due date"
+            },
+            status: {
+              type: "string",
+              enum: ["needsAction", "completed"],
+              description: "Task status"
+            }
+          },
+          required: ["parentTaskId", "title"]
+        }
+      },
+      {
+        name: "listSubtasks",
+        description: "List all subtasks of a parent task",
+        inputSchema: {
+          type: "object",
+          properties: {
+            taskListId: {
+              type: "string",
+              description: "Task list ID"
+            },
+            parentTaskId: {
+              type: "string",
+              description: "Parent task ID"
+            }
+          },
+          required: ["taskListId", "parentTaskId"]
+        }
+      },
+      {
+        name: "batchCreateSubtasks",
+        description: "Create multiple subtasks at once under different parent tasks",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subtasks: {
+              type: "array",
+              description: "Array of subtasks to create",
+              items: {
+                type: "object",
+                properties: {
+                  taskListId: {
+                    type: "string",
+                    description: "Task list ID"
+                  },
+                  parentTaskId: {
+                    type: "string",
+                    description: "Parent task ID"
+                  },
+                  title: {
+                    type: "string",
+                    description: "Task title"
+                  },
+                  notes: {
+                    type: "string",
+                    description: "Task notes"
+                  },
+                  due: {
+                    type: "string",
+                    description: "Due date"
+                  },
+                  status: {
+                    type: "string",
+                    enum: ["needsAction", "completed"],
+                    description: "Task status"
+                  }
+                },
+                required: ["parentTaskId", "title"]
+              }
+            }
+          },
+          required: ["subtasks"]
+        }
+      },
     ],
   };
 });
@@ -538,6 +658,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
   if (request.params.name === "batchDeleteTaskLists") {
     const taskResult = await TaskActions.batchDeleteTaskLists(request, tasks);
+    return taskResult;
+  }
+  if (request.params.name === "makeSubtask") {
+    const taskResult = await TaskActions.makeSubtask(request, tasks);
+    return taskResult;
+  }
+  if (request.params.name === "createSubtask") {
+    const taskResult = await TaskActions.createSubtask(request, tasks);
+    return taskResult;
+  }
+  if (request.params.name === "listSubtasks") {
+    const taskResult = await TaskActions.listSubtasks(request, tasks);
+    return taskResult;
+  }
+  if (request.params.name === "batchCreateSubtasks") {
+    const taskResult = await TaskActions.batchCreateSubtasks(request, tasks);
     return taskResult;
   }
   throw new Error("Tool not found");
