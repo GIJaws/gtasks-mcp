@@ -286,24 +286,40 @@ export class TaskActions {
   }
 
   static async listTaskLists(request: CallToolRequest, tasks: tasks_v1.Tasks) {
-    const taskListsResponse = await tasks.tasklists.list({
-      maxResults: MAX_TASK_RESULTS,
-    });
+    try {
+      const taskListsResponse = await tasks.tasklists.list({
+        maxResults: MAX_TASK_RESULTS,
+      });
 
-    const taskLists = taskListsResponse.data.items || [];
-    const formattedLists = taskLists.map(list => 
-      `List: ${list.title || 'Unnamed'} - ID: ${list.id} - Updated: ${list.updated}`
-    ).join('\n');
+      // Better null checking
+      const taskLists = taskListsResponse?.data?.items || [];
+      
+      // More defensive formatting with fallbacks
+      const formattedLists = taskLists.map(list => 
+        `List: ${list?.title || 'Unnamed'} - ID: ${list?.id || 'Unknown'} - Updated: ${list?.updated || 'Unknown'}`
+      ).join('\n');
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Found ${taskLists.length} task lists:\n${formattedLists}`,
-        },
-      ],
-      isError: false,
-    };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Found ${taskLists.length} task lists:\n${formattedLists}`,
+          },
+        ],
+        isError: false,
+      };
+    } catch (error) {
+      console.error("Error listing task lists:", error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error listing task lists: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   }
   
   static async moveTask(request: CallToolRequest, tasks: tasks_v1.Tasks) {
@@ -317,31 +333,64 @@ export class TaskActions {
     
     try {
       // 1. Get the task from source list
-      const taskResponse = await tasks.tasks.get({
-        tasklist: sourceTaskListId,
-        task: taskId,
-      });
-      
-      const originalTask = taskResponse.data;
+      let originalTask;
+      try {
+        const taskResponse = await tasks.tasks.get({
+          tasklist: sourceTaskListId,
+          task: taskId,
+        });
+        
+        originalTask = taskResponse?.data;
+        
+        if (!originalTask || !originalTask.title) {
+          throw new Error(`Task not found or has invalid format`);
+        }
+      } catch (error) {
+        throw new Error(`Could not get source task: ${error instanceof Error ? error.message : String(error)}`);
+      }
       
       // 2. Create the task in the target list
-      const newTask = {
-        title: originalTask.title,
-        notes: originalTask.notes,
-        due: originalTask.due,
-        status: originalTask.status,
-      };
-      
-      const newTaskResponse = await tasks.tasks.insert({
-        tasklist: targetTaskListId,
-        requestBody: newTask,
-      });
+      let newTaskId;
+      try {
+        const newTask = {
+          title: originalTask.title || "Untitled Task",
+          notes: originalTask.notes || "",
+          due: originalTask.due || undefined,
+          status: originalTask.status || "needsAction",
+        };
+        
+        const newTaskResponse = await tasks.tasks.insert({
+          tasklist: targetTaskListId,
+          requestBody: newTask,
+        });
+        
+        newTaskId = newTaskResponse?.data?.id;
+        
+        if (!newTaskId) {
+          throw new Error("Failed to create new task - no ID returned");
+        }
+      } catch (error) {
+        throw new Error(`Could not create task in target list: ${error instanceof Error ? error.message : String(error)}`);
+      }
       
       // 3. Delete the task from the source list
-      await tasks.tasks.delete({
-        tasklist: sourceTaskListId,
-        task: taskId,
-      });
+      try {
+        await tasks.tasks.delete({
+          tasklist: sourceTaskListId,
+          task: taskId,
+        });
+      } catch (error) {
+        console.error(`Warning: Created task ${newTaskId} in ${targetTaskListId} but failed to delete original: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Task "${originalTask.title}" was copied to list "${targetTaskListId}" but could not be deleted from source list. You may need to delete it manually.`,
+            },
+          ],
+          isError: false,
+        };
+      }
       
       return {
         content: [
@@ -370,108 +419,150 @@ export class TaskActions {
     const prefixMappings = request.params.arguments?.prefixMappings as Record<string, string>;
     const dryRun = request.params.arguments?.dryRun as boolean || false;
     
-    if (!prefixMappings) {
-      throw new Error("Prefix mappings are required");
+    if (!prefixMappings || Object.keys(prefixMappings).length === 0) {
+      throw new Error("Prefix mappings are required and must not be empty");
     }
     
-    const allTasks = await this._list(request, tasks);
-    const taskListsResponse = await tasks.tasklists.list({
-      maxResults: MAX_TASK_RESULTS,
-    });
-    
-    const taskLists = taskListsResponse.data.items || [];
-    const listIdByTitle: Record<string, string> = {};
-    
-    // Create a mapping of list titles to IDs
-    taskLists.forEach(list => {
-      if (list.title && list.id) {
-        listIdByTitle[list.title] = list.id;
-      }
-    });
-    
-    const movePlans: Array<{
-      task: tasks_v1.Schema$Task & { taskListId?: string, taskListTitle?: string },
-      targetListId: string,
-      targetListTitle: string,
-      prefix: string
-    }> = [];
-    
-    // Find tasks that need to be moved
-    for (const task of allTasks) {
-      if (!task.title || !task.taskListId) continue;
+    try {
+      const allTasks = await this._list(request, tasks);
+      const taskListsResponse = await tasks.tasklists.list({
+        maxResults: MAX_TASK_RESULTS,
+      });
       
-      for (const [prefix, targetListTitle] of Object.entries(prefixMappings)) {
-        if (task.title.startsWith(`[${prefix}]`)) {
-          const targetListId = listIdByTitle[targetListTitle];
+      const taskLists = taskListsResponse?.data?.items || [];
+      const listIdByTitle: Record<string, string> = {};
+      const listIdByNormalizedTitle: Record<string, string> = {};
+      
+      // Create a mapping of list titles to IDs, including normalized versions for better matching
+      taskLists.forEach(list => {
+        if (list?.title && list?.id) {
+          // Store by exact title
+          listIdByTitle[list.title] = list.id;
           
-          if (!targetListId) {
-            console.warn(`Target list "${targetListTitle}" not found`);
-            continue;
+          // Also store by normalized title (lowercase and trimmed)
+          const normalizedTitle = list.title.toLowerCase().trim();
+          listIdByNormalizedTitle[normalizedTitle] = list.id;
+        }
+      });
+      
+      const movePlans: Array<{
+        task: tasks_v1.Schema$Task & { taskListId?: string, taskListTitle?: string },
+        targetListId: string,
+        targetListTitle: string,
+        prefix: string
+      }> = [];
+      
+      // Find tasks that need to be moved
+      for (const task of allTasks) {
+        if (!task?.title || !task?.taskListId || !task?.id) continue;
+        
+        for (const [prefix, targetListTitle] of Object.entries(prefixMappings)) {
+          if (task.title.startsWith(`[${prefix}]`)) {
+            // Try exact match first
+            let targetListId = listIdByTitle[targetListTitle];
+            
+            // If not found, try normalized match
+            if (!targetListId) {
+              const normalizedTargetTitle = targetListTitle.toLowerCase().trim();
+              targetListId = listIdByNormalizedTitle[normalizedTargetTitle];
+            }
+            
+            if (!targetListId) {
+              console.warn(`Target list "${targetListTitle}" not found. Available lists: ${Object.keys(listIdByTitle).join(", ")}`);
+              continue;
+            }
+            
+            // Skip if task is already in the correct list
+            if (task.taskListId === targetListId) continue;
+            
+            movePlans.push({
+              task,
+              targetListId,
+              targetListTitle,
+              prefix
+            });
+            
+            break;
           }
-          
-          // Skip if task is already in the correct list
-          if (task.taskListId === targetListId) continue;
-          
-          movePlans.push({
-            task,
-            targetListId,
-            targetListTitle,
-            prefix
-          });
-          
-          break;
         }
       }
-    }
-    
-    // Execute moves or just report in dry run mode
-    const results: string[] = [];
-    
-    if (dryRun) {
-      results.push(`Would move ${movePlans.length} tasks:`);
       
-      for (const plan of movePlans) {
-        results.push(`- "${plan.task.title}" from "${plan.task.taskListTitle}" to "${plan.targetListTitle}"`);
-      }
-    } else {
-      results.push(`Moving ${movePlans.length} tasks:`);
+      // Execute moves or just report in dry run mode
+      const results: string[] = [];
+      let successCount = 0;
+      let failureCount = 0;
       
-      for (const plan of movePlans) {
-        try {
-          // Create new task
-          const newTask = {
-            title: plan.task.title,
-            notes: plan.task.notes,
-            due: plan.task.due,
-            status: plan.task.status,
-          };
-          
-          await tasks.tasks.insert({
-            tasklist: plan.targetListId,
-            requestBody: newTask,
-          });
-          
-          // Delete original task
-          await tasks.tasks.delete({
-            tasklist: plan.task.taskListId!,
-            task: plan.task.id!,
-          });
-          
-          results.push(`- Moved "${plan.task.title}" from "${plan.task.taskListTitle}" to "${plan.targetListTitle}"`);
-        } catch (error) {
-          results.push(`- FAILED to move "${plan.task.title}": ${error instanceof Error ? error.message : String(error)}`);
+      if (dryRun) {
+        results.push(`Would move ${movePlans.length} tasks:`);
+        
+        for (const plan of movePlans) {
+          results.push(`- "${plan.task.title}" from "${plan.task.taskListTitle || 'Unknown list'}" to "${plan.targetListTitle}"`);
         }
+      } else {
+        results.push(`Moving ${movePlans.length} tasks:`);
+        
+        for (const plan of movePlans) {
+          try {
+            if (!plan.task.title || !plan.task.id) {
+              results.push(`- SKIPPED task with missing title or ID`);
+              continue;
+            }
+            
+            // Create new task
+            const newTask = {
+              title: plan.task.title,
+              notes: plan.task.notes || "",
+              due: plan.task.due || undefined,
+              status: plan.task.status || "needsAction",
+            };
+            
+            // Insert new task
+            const newTaskResponse = await tasks.tasks.insert({
+              tasklist: plan.targetListId,
+              requestBody: newTask,
+            });
+            
+            if (!newTaskResponse?.data?.id) {
+              throw new Error("Failed to create new task - no ID returned");
+            }
+            
+            // Delete original task
+            await tasks.tasks.delete({
+              tasklist: plan.task.taskListId,
+              task: plan.task.id,
+            });
+            
+            results.push(`- Moved "${plan.task.title}" from "${plan.task.taskListTitle || 'Unknown list'}" to "${plan.targetListTitle}"`);
+            successCount++;
+          } catch (error) {
+            results.push(`- FAILED to move "${plan.task.title}": ${error instanceof Error ? error.message : String(error)}`);
+            failureCount++;
+          }
+        }
+        
+        results.push(`\nSummary: ${successCount} tasks moved successfully, ${failureCount} failed.`);
       }
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: results.join('\n'),
+          },
+        ],
+        isError: false,
+      };
+    } catch (error) {
+      console.error("Error reorganizing tasks:", error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error reorganizing tasks: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
-    
-    return {
-      content: [
-        {
-          type: "text",
-          text: results.join('\n'),
-        },
-      ],
-      isError: false,
-    };
   }
 }
